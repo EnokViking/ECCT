@@ -11,3 +11,6 @@ Features:
 >Step & slope handling
 
 >Arbitrary up vector
+
+![](https://github.com/EnokViking/ECCT/blob/master/img/planet.gif)
+![](https://github.com/EnokViking/ECCT/blob/master/img/stairs.gif)
