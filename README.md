@@ -1,7 +1,7 @@
 # ECCT
 A 2D kinematic character controller for Unity3D
 
-Features
+Features:
 >First order control
 
 >Swept collision detection
