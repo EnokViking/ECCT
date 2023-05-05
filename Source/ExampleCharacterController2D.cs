@@ -69,6 +69,22 @@ public class ExampleCharacterController2D : MonoBehaviour
 		_groundPoints = new List<GroundInfo>();
 	}
 
+	private void Update()
+	{
+		if (_drawDebugInfo) {
+			var headPos = transform.position + transform.up * _collider.size.y * 0.5f;
+			var vel = GetVelocity();
+
+			var up = transform.up;
+			var right = transform.right;
+			var left = -transform.right;
+
+			Debug.DrawLine(headPos + up * 1.0f, headPos + up * 2.0f, Color.green);
+
+			Debug.DrawLine(headPos + up * 1.5f + left * 0.5f, headPos + up * 1.5f + right * 0.5f, Color.green);
+			Debug.DrawRay(headPos + up * 1.5f, _localDir.normalized * 0.5f, Color.red);
+		}
+	}
 	public void SetUpVector(Vector2 up) => _upVector = up;
 	public Vector2 GetUpVector() => _upVector;
 	public Vector2 GetVelocity() => _velocity;
@@ -78,11 +94,13 @@ public class ExampleCharacterController2D : MonoBehaviour
 	//This effectively works the same way as described in this excellent post by Glenn Fiedler: https://gafferongames.com/post/fix_your_timestep/
 	public void Move(Vector2 velocity, GroundInfo groundInfo, float dt)
 	{
-		_rBody.SetRotation(Quaternion.LookRotation(Vector3.forward, _upVector));
-		_pose = _rBody.rotation;
 		_velocity = velocity;
 
-		Vector2 startPos = _rBody.position;
+		var startRot = _rBody.rotation;
+		var startPos = _rBody.position;
+
+		_rBody.SetRotation(Quaternion.LookRotation(Vector3.forward, _upVector));
+		_pose = _rBody.rotation;
 
 		if (groundInfo.isGrounded && velocity.y <= 0) {
 			_localDir = Vector2.Perpendicular(-SelectRelevantNormal(groundInfo) * Math.Sign(_velocity.x));
@@ -101,11 +119,11 @@ public class ExampleCharacterController2D : MonoBehaviour
 			verticalCollision = Math.Sign(v) < 0;
 
 			if (horizontalCollision) {
-				velocity.x = 0;
+				_velocity.x = 0;
 			}
 
 			if (verticalCollision) {
-				velocity.y = 0;
+				_velocity.y = 0;
 			}
 		}
 
@@ -120,6 +138,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 		//Move the rigidbody back to the start position of this physics frame and move it properly with MovePosition to take interpolation into consideration. (this rhymes too!)
 		_rBody.position = startPos;
+		_rBody.rotation = startRot;
 
 		//This solves an edge case introduced by the contact offset when the character is wedged into 2 opposing slopes and is moving too slow to overcome the combined offset
 		//of both slope geometries.
@@ -131,18 +150,15 @@ public class ExampleCharacterController2D : MonoBehaviour
 		}
 			
 		_rBody.MovePosition(finalPosition);
-
-		if (_drawDebugInfo) {
-			Debug.DrawRay(_rBody.position, _localDir * (_velocity.magnitude * dt + 1f), Color.red);
-		}
+		_rBody.MoveRotation(_pose);
 	}
 
 	private void OnDrawGizmos()
 	{
 		if (_drawDebugInfo && _collider != null) {
 			Gizmos.color = Color.red;
-			Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, transform.localScale);
-			Gizmos.DrawWireCube(_localDir * _velocity.magnitude * (1 / 50f), new Vector3(_collider.size.x, _collider.size.y));
+			Gizmos.matrix = transform.localToWorldMatrix;
+			Gizmos.DrawWireCube(transform.InverseTransformDirection(_localDir), new Vector3(_collider.size.x, _collider.size.y));
 		}
 	}
 
@@ -215,7 +231,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 			var angle = Vector2.Angle(_upVector, contact.normal);
 
 			bool grounded = angle >= 0 && angle <= _maxGroundAngle 
-				&& Vector2.Distance(feetPos, contact.point) <= _collider.size.x
+				&& Vector2.Distance(feetPos, contact.point) <= (_collider.size.x)
 				&& _velocity.y <= 0;
 
 			if (grounded) {
