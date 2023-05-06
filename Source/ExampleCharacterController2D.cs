@@ -16,7 +16,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 	public bool _drawDebugInfo;
 
 	private float _pose;
-	private Vector2 _localDir;
+	private Vector2 _direction;
 
 	private Rigidbody2D _rBody;
 	private BoxCollider2D _collider;
@@ -72,17 +72,17 @@ public class ExampleCharacterController2D : MonoBehaviour
 	private void Update()
 	{
 		if (_drawDebugInfo) {
-			var headPos = transform.position + transform.up * _collider.size.y * 0.5f;
+
+			var headPos = transform.position + transform.up * _collider.size.y * 1f;
 			var vel = GetVelocity();
 
 			var up = transform.up;
 			var right = transform.right;
 			var left = -transform.right;
 
-			Debug.DrawLine(headPos + up * 1.0f, headPos + up * 2.0f, Color.green);
-
-			Debug.DrawLine(headPos + up * 1.5f + left * 0.5f, headPos + up * 1.5f + right * 0.5f, Color.green);
-			Debug.DrawRay(headPos + up * 1.5f, _localDir.normalized * 0.5f, Color.red);
+			Debug.DrawLine(headPos - Vector3.up * 0.5f, headPos + Vector3.up * 0.5f, Color.green);
+			Debug.DrawLine(headPos - Vector3.right * 0.5f, headPos + Vector3.right * 0.5f, Color.green);
+			Debug.DrawRay(headPos, _velocity.normalized * 0.5f, Color.red);
 		}
 	}
 	public void SetUpVector(Vector2 up) => _upVector = up;
@@ -102,18 +102,18 @@ public class ExampleCharacterController2D : MonoBehaviour
 		_rBody.SetRotation(Quaternion.LookRotation(Vector3.forward, _upVector));
 		_pose = _rBody.rotation;
 
+		_direction = transform.TransformDirection(_velocity.normalized);
+
 		if (groundInfo.isGrounded && velocity.y <= 0) {
-			_localDir = Vector2.Perpendicular(-SelectRelevantNormal(groundInfo) * Math.Sign(_velocity.x));
-		} else {
-			_localDir = transform.right * _velocity.normalized.x + transform.up * _velocity.normalized.y;
+			_direction = Vector2.Perpendicular(-SelectRelevantNormal(groundInfo) * Math.Sign(_velocity.x));
 		}
 
 		bool horizontalCollision = false;
 		bool verticalCollision = false;
 
-		if (HandleSweep(startPos, _localDir, Mathf.Max(2 * _contactOffset, _velocity.magnitude * dt), out Vector2 normal)) {
-			float h = Vector2.Dot(normal, new Vector2(_localDir.x, 0f));
-			float v = Vector2.Dot(normal, new Vector2(0f, _localDir.y));
+		if (HandleSweep(startPos, _direction, Mathf.Max(2 * _contactOffset, _velocity.magnitude * dt), out Vector2 normal)) {
+			float h = Vector2.Dot(normal, new Vector2(_direction.x, 0f));
+			float v = Vector2.Dot(normal, new Vector2(0f, _direction.y));
 
 			horizontalCollision = Math.Sign(h) < 0 && !IsGroundNormal(normal);
 			verticalCollision = Math.Sign(v) < 0;
@@ -127,7 +127,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 			}
 		}
 
-		Vector2 finalPosition = Vector2.MoveTowards(_rBody.position, _rBody.position + _localDir, _velocity.magnitude * dt);
+		Vector2 finalPosition = Vector2.MoveTowards(_rBody.position, _rBody.position + _direction, _velocity.magnitude * dt);
 		_rBody.position = finalPosition;
 
 		if (horizontalCollision) {
@@ -145,10 +145,10 @@ public class ExampleCharacterController2D : MonoBehaviour
 		//Just add the contact offset to the final move direction to overcome the "magnetic force".
 		//this is only seems relevant when the character is in contact with multiple points on a slope.
 		if (groundInfo.contactCount >= 2 && groundInfo.angle > 0 && Vector2.Dot(groundInfo.normalA, groundInfo.normalB) != 1) {
-			_rBody.MovePosition(finalPosition + _localDir * (_contactOffset * 2));
+			_rBody.MovePosition(finalPosition + _direction * (_contactOffset * 2));
 			return;
 		}
-			
+
 		_rBody.MovePosition(finalPosition);
 		_rBody.MoveRotation(_pose);
 	}
@@ -158,7 +158,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 		if (_drawDebugInfo && _collider != null) {
 			Gizmos.color = Color.red;
 			Gizmos.matrix = transform.localToWorldMatrix;
-			Gizmos.DrawWireCube(transform.InverseTransformDirection(_localDir), new Vector3(_collider.size.x, _collider.size.y));
+			Gizmos.DrawWireCube(transform.InverseTransformDirection(_direction * Time.fixedDeltaTime), new Vector3(_collider.size.x, _collider.size.y));
 		}
 	}
 
@@ -198,7 +198,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 		var diff = _collider.size.y - _hitResults[0].distance;
 
 		if (diff <= _maxStepHeight) {
-			_rBody.position += _upVector * diff + _localDir * (_contactOffset * 0.5f);
+			_rBody.position += _upVector * diff + _direction * (_contactOffset * 0.5f);
 			return;
 		}
 	}
