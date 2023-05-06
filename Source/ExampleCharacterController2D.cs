@@ -3,19 +3,36 @@ using System.Collections.Generic;
 
 using UnityEngine;
 
+
+public enum CollisionType
+{
+	Horizontal,
+	Vertical
+}
+
+public delegate void OnCollision(CollisionType type);
+
 [RequireComponent(typeof(Rigidbody2D), typeof(BoxCollider2D))]
 public class ExampleCharacterController2D : MonoBehaviour
 {
-	//[SerializeField] private float _moveSpeed;
+	[Header("Contacts")]
 	[SerializeField] int _maxContactsToQuery;
-	[SerializeField] private LayerMask _obstacles;
+	[SerializeField] private LayerMask _layerMask;
+
+	[Header("Collision")]
 	[SerializeField] private int _solverIterations;
+
+	[Header("Ground")]
 	[SerializeField] private float _maxStepHeight;
 	[SerializeField] private float _maxGroundAngle;
 
-	public bool _drawDebugInfo;
+	[Header("Debug")]
+	[SerializeField] private bool _drawDebugInfo;
+	[SerializeField] private bool _enableGroundClamping;
 
-	private float _pose;
+	public event OnCollision OnControllerCollision;
+
+	private float finalRot;
 	private Vector2 _direction;
 
 	private Rigidbody2D _rBody;
@@ -33,6 +50,12 @@ public class ExampleCharacterController2D : MonoBehaviour
 	private float _contactOffset;
 	private List<GroundInfo> _groundPoints;
 
+	private float _dt;
+	private GroundInfo _groundInfo;
+
+	private Vector2 _startPos;
+	private float _startRot;
+
 	public struct GroundInfo
 	{
 		public bool isGrounded;
@@ -46,10 +69,15 @@ public class ExampleCharacterController2D : MonoBehaviour
 		public Vector2 pointB;
 	}
 
-	// Start is called before the first frame update
+	public struct ControllerState 
+	{
+		public Vector2 finalPosition;
+		public float finalRotation;
+	}
+
 	private void Awake()
 	{
-		//Having a rigidbody component in Unity is a good idea if you intend to have physics shapes that move around
+		//Having a rigidbody component in Unity is a good idea if you intend to have physics shapes that move around because of interpolation
 		_rBody = GetComponent<Rigidbody2D>();
 		_collider = GetComponent<BoxCollider2D>();
 
@@ -64,9 +92,15 @@ public class ExampleCharacterController2D : MonoBehaviour
 		
 		_upVector = Vector2.up;
 
-		_contactFilter = new ContactFilter2D() { layerMask = _obstacles };
+		_contactFilter = new ContactFilter2D() { layerMask = _layerMask };
 		_contactOffset = Physics2D.defaultContactOffset;
 		_groundPoints = new List<GroundInfo>();
+
+		OnControllerCollision += (type) =>
+		{
+			if (type == CollisionType.Horizontal && _groundInfo.isGrounded)
+				HandleStep(_groundInfo);
+		};
 	}
 
 	private void Update()
@@ -74,11 +108,6 @@ public class ExampleCharacterController2D : MonoBehaviour
 		if (_drawDebugInfo) {
 
 			var headPos = transform.position + transform.up * _collider.size.y * 1f;
-			var vel = GetVelocity();
-
-			var up = transform.up;
-			var right = transform.right;
-			var left = -transform.right;
 
 			Debug.DrawLine(headPos - Vector3.up * 0.5f, headPos + Vector3.up * 0.5f, Color.green);
 			Debug.DrawLine(headPos - Vector3.right * 0.5f, headPos + Vector3.right * 0.5f, Color.green);
@@ -88,69 +117,63 @@ public class ExampleCharacterController2D : MonoBehaviour
 	public void SetUpVector(Vector2 up) => _upVector = up;
 	public Vector2 GetUpVector() => _upVector;
 	public Vector2 GetVelocity() => _velocity;
+	public void EnableGroundClamping(bool flag) => _enableGroundClamping = flag;
 
-	//We collect input in Update which runs every frame and then we drive the attached rigidbody with its MovePosition method for first order control.
-	//Interpolation is enabled, which lets the renderer display our player graphics between physics steps to smooth things out.
-	//This effectively works the same way as described in this excellent post by Glenn Fiedler: https://gafferongames.com/post/fix_your_timestep/
-	public void Move(Vector2 velocity, GroundInfo groundInfo, float dt)
+	public void BeginMove(GroundInfo groundInfo, float dt) 
+	{
+		_startPos = _rBody.position;
+		_startRot = _rBody.rotation;
+
+		_groundInfo = groundInfo;
+		_dt = dt;
+	}
+
+	public ControllerState Update(Vector2 velocity)
 	{
 		_velocity = velocity;
 
-		var startRot = _rBody.rotation;
-		var startPos = _rBody.position;
-
 		_rBody.SetRotation(Quaternion.LookRotation(Vector3.forward, _upVector));
-		_pose = _rBody.rotation;
+		finalRot = _rBody.rotation;
 
 		_direction = transform.TransformDirection(_velocity.normalized);
 
-		if (groundInfo.isGrounded && velocity.y <= 0) {
-			_direction = Vector2.Perpendicular(-SelectRelevantNormal(groundInfo) * Math.Sign(_velocity.x));
-		}
+		if (_groundInfo.isGrounded && _velocity.y <= 0) 
+			_direction = Vector2.Perpendicular(-SelectRelevantNormal(_groundInfo) * Math.Sign(_velocity.x));
 
-		bool horizontalCollision = false;
-		bool verticalCollision = false;
-
-		if (HandleSweep(startPos, _direction, Mathf.Max(2 * _contactOffset, _velocity.magnitude * dt), out Vector2 normal)) {
+		if (HandleSweep(_startPos, _direction, Mathf.Max(2 * _contactOffset, _velocity.magnitude * _dt), out Vector2 normal)) {
 			float h = Vector2.Dot(normal, new Vector2(_direction.x, 0f));
 			float v = Vector2.Dot(normal, new Vector2(0f, _direction.y));
 
-			horizontalCollision = Math.Sign(h) < 0 && !IsGroundNormal(normal);
-			verticalCollision = Math.Sign(v) < 0;
+			var horizontalCollision = h < 0 && !IsGroundNormal(normal) && !IsGroundNormal(-normal);
+			var verticalCollision = v < 0 && (IsGroundNormal(normal) || IsGroundNormal(-normal));
 
 			if (horizontalCollision) {
 				_velocity.x = 0;
+				OnControllerCollision?.Invoke(CollisionType.Horizontal);
 			}
 
 			if (verticalCollision) {
 				_velocity.y = 0;
+				OnControllerCollision?.Invoke(CollisionType.Vertical);
 			}
 		}
 
-		Vector2 finalPosition = Vector2.MoveTowards(_rBody.position, _rBody.position + _direction, _velocity.magnitude * dt);
-		_rBody.position = finalPosition;
+		_rBody.position = Vector2.MoveTowards(_rBody.position, _rBody.position + _direction, _velocity.magnitude * _dt);
+		var finalPos = _rBody.position;
 
-		if (horizontalCollision) {
-			HandleStep(groundInfo);
-		}
+		return new ControllerState { finalPosition = finalPos, finalRotation = finalRot };
+	}
 
+	public void EndMove(Vector2 finalPosition, float finalRotation) 
+	{
+		ClampToGround(_groundInfo, ref finalPosition);
 		OverlapRecovery(ref finalPosition);
 
-		//Move the rigidbody back to the start position of this physics frame and move it properly with MovePosition to take interpolation into consideration. (this rhymes too!)
-		_rBody.position = startPos;
-		_rBody.rotation = startRot;
-
-		//This solves an edge case introduced by the contact offset when the character is wedged into 2 opposing slopes and is moving too slow to overcome the combined offset
-		//of both slope geometries.
-		//Just add the contact offset to the final move direction to overcome the "magnetic force".
-		//this is only seems relevant when the character is in contact with multiple points on a slope.
-		if (groundInfo.contactCount >= 2 && groundInfo.angle > 0 && Vector2.Dot(groundInfo.normalA, groundInfo.normalB) != 1) {
-			_rBody.MovePosition(finalPosition + _direction * (_contactOffset * 2));
-			return;
-		}
+		_rBody.position = _startPos;
+		_rBody.rotation = _startRot;
 
 		_rBody.MovePosition(finalPosition);
-		_rBody.MoveRotation(_pose);
+		_rBody.MoveRotation(finalRotation);
 	}
 
 	private void OnDrawGizmos()
@@ -158,20 +181,37 @@ public class ExampleCharacterController2D : MonoBehaviour
 		if (_drawDebugInfo && _collider != null) {
 			Gizmos.color = Color.red;
 			Gizmos.matrix = transform.localToWorldMatrix;
-			Gizmos.DrawWireCube(transform.InverseTransformDirection(_direction * Time.fixedDeltaTime), new Vector3(_collider.size.x, _collider.size.y));
+			Gizmos.DrawWireCube(transform.InverseTransformDirection(_direction), new Vector3(_collider.size.x, _collider.size.y));
+		}
+	}
+
+	private void ClampToGround(GroundInfo info, ref Vector2 finalPosition) 
+	{
+		Vector2 size = new Vector2(_collider.size.x - (_contactOffset * 0.5f), _collider.size.y);
+		int count = Physics2D.BoxCastNonAlloc(_rBody.position, _collider.size, finalRot, -_upVector, _hitResults, Mathf.Infinity, _layerMask);
+
+		if (count > 0 && _enableGroundClamping) {
+			var dist = _hitResults[0].distance;
+
+			if (info.isGrounded) {
+				finalPosition -= Vector2.Lerp(info.normalA, info.normalB, 0.5f) * dist;
+				return;
+			}
+
+			finalPosition -= _upVector * dist;
 		}
 	}
 
 	private void OverlapRecovery(ref Vector2 finalPosition) 
 	{
 		for (int it = 0; it < _solverIterations; it++) {
-			int count = Physics2D.OverlapBoxNonAlloc(_rBody.position, _collider.size, _pose, _overlapResults, _obstacles);
+			int count = Physics2D.OverlapBoxNonAlloc(_rBody.position, _collider.size, finalRot, _overlapResults, _layerMask);
 
 			for (int i = 0; i < count; i++) {
 				var colliderDist = Physics2D.Distance(_collider, _overlapResults[i]);
 
 				if (colliderDist.isOverlapped) {
-					var dist = colliderDist.distance + _contactOffset * 0.5f;
+					var dist = colliderDist.distance + (_contactOffset * 0.5f);
 					var dir = (colliderDist.pointB - colliderDist.pointA).normalized;
 
 					//Corrective displacement
@@ -191,21 +231,25 @@ public class ExampleCharacterController2D : MonoBehaviour
 		var width = _collider.size.x + 2 * _contactOffset;
 		var height = _contactOffset;
 
-		if (Physics2D.BoxCastNonAlloc(_rBody.position + _upVector * _collider.size.y * 0.5f, new Vector2(width, height), _pose, 
-			-_upVector, _hitResults, _collider.size.y, _obstacles) == 0)
+		if (Physics2D.BoxCastNonAlloc(_rBody.position + _upVector * _collider.size.y * 0.5f, new Vector2(width, height), finalRot, 
+			-_upVector, _hitResults, _collider.size.y, _layerMask) == 0)
 			return;
 
 		var diff = _collider.size.y - _hitResults[0].distance;
 
 		if (diff <= _maxStepHeight) {
-			_rBody.position += _upVector * diff + _direction * (_contactOffset * 0.5f);
+
+			_rBody.position += _upVector * (diff + _contactOffset);
+			_rBody.position += _direction * _contactOffset;
+
+			//finalPosition = _rBody.position;
 			return;
 		}
 	}
 
 	private bool HandleSweep(Vector2 startPos, Vector2 direction, float distance, out Vector2 normal) 
 	{
-		int sweepCount = Physics2D.BoxCastNonAlloc(_rBody.position, _collider.size, _pose, direction, _hitResults, distance, _obstacles);
+		int sweepCount = Physics2D.BoxCastNonAlloc(_rBody.position, _collider.size, finalRot, direction, _hitResults, distance, _layerMask);
 		normal = Vector2.zero;
 
 		if (sweepCount > 0) {
@@ -265,15 +309,18 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 	Vector2 SelectRelevantNormal(GroundInfo info) 
 	{
-		var pos = _rBody.position - _upVector * (_collider.size.y * 0.5f) + (_velocity.normalized * _collider.size.x * 0.5f);
+		var right = new Vector2(transform.right.x, transform.right.y);
+		var pos = _rBody.position - _upVector * (_collider.size.y * 0.5f) + right * (_velocity.x * 0.5f);
 
 		if (info.normalA != Vector2.zero && info.normalB != Vector2.zero) {
 			if (Vector2.Distance(info.pointA, pos) < Vector2.Distance(info.pointB, pos)) {
 				return info.normalA;
 			}
+
+			return info.normalB;
 		}
 	
-		return info.normalA == Vector2.zero ? info.normalB : info.normalA;
+		return Vector2.zero;
 	}
 
 	bool IsGroundNormal(Vector2 normal) 

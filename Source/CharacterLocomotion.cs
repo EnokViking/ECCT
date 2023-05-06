@@ -22,7 +22,12 @@ public class CharacterLocomotion : MonoBehaviour
 
 	private void Awake()
 	{
-		_controller = GetComponent<ExampleCharacterController2D>();	
+		_controller = GetComponent<ExampleCharacterController2D>();
+		_controller.OnControllerCollision += (type) =>
+		{
+			if (type == CollisionType.Vertical && _velocity.y > 0)
+				_velocity.y = 0;
+		};
 	}
 
 	private void Update()
@@ -51,13 +56,21 @@ public class CharacterLocomotion : MonoBehaviour
 
 		if (!groundInfo.isGrounded)
 			_velocity.y -= _gravity * dt;
-		else
+		else {
 			_velocity.y = 0;
+			_controller.EnableGroundClamping(true);
+		}
+			
 
 		if (groundInfo.isGrounded && _input.jump) {
+			_controller.EnableGroundClamping(false);
 			_velocity.y = _jumpVelocity;
 		}
 
-		_controller.Move(_velocity, groundInfo, dt);
+		_controller.BeginMove(groundInfo, dt);
+
+		var state = _controller.Update(_velocity);
+
+		_controller.EndMove(state.finalPosition, state.finalRotation);
     }
 }
