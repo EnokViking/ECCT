@@ -5,9 +5,13 @@ public class CharacterLocomotion : MonoBehaviour
 	[SerializeField] private float _moveSpeed;
 	[SerializeField] private float _jumpHeight;
 	[SerializeField] private float _timeToPeakReached;
+	[SerializeField] private bool _stickToGround;
 	[SerializeField] private Transform _planet;
 
 	private ExampleCharacterController2D _controller;
+
+	private ExampleCharacterController2D.GroundInfo _previousGround;
+
 	private Vector2 _velocity;
 	private FrameInput _input;
 
@@ -54,23 +58,29 @@ public class CharacterLocomotion : MonoBehaviour
 
 		_velocity.x = _input.x * _moveSpeed;
 
-		if (!groundInfo.isGrounded)
+		if (!groundInfo.isGrounded) {
 			_velocity.y -= _gravity * dt;
-		else {
+		} else {
 			_velocity.y = 0;
 			_controller.EnableGroundClamping(true);
 		}
-			
 
 		if (groundInfo.isGrounded && _input.jump) {
-			_controller.EnableGroundClamping(false);
 			_velocity.y = _jumpVelocity;
+			_controller.EnableGroundClamping(false);
 		}
 
-		_controller.BeginMove(groundInfo, dt);
+		if (!groundInfo.isGrounded && _previousGround.isGrounded && !_stickToGround)
+			_controller.EnableGroundClamping(false);
 
+		_controller.BeginMove(groundInfo, dt);
 		var state = _controller.Update(_velocity);
 
+		if (groundInfo.isGrounded && _controller.HorizontalTouch()) {
+			state.finalPosition = _controller.HandleStep();
+		}
+
 		_controller.EndMove(state.finalPosition, state.finalRotation);
+		_previousGround = groundInfo;
     }
 }
