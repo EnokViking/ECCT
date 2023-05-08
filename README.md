@@ -12,6 +12,12 @@ Features:
 
 >Arbitrary up vector
 
+>Substepping
+
+>Ground clamping
+
+Example use in CharacterLocomotion.cs
+
 ![](https://github.com/EnokViking/ECCT/blob/master/img/planet.gif)
 ![](https://github.com/EnokViking/ECCT/blob/master/img/stairs.gif)
 ![](https://github.com/EnokViking/ECCT/blob/master/img/fast.gif)
