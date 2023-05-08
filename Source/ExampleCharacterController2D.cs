@@ -20,6 +20,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 	[Header("Collision")]
 	[SerializeField] private int _solverIterations;
+	[SerializeField] private int _subSteps;
 
 	[Header("Ground")]
 	[SerializeField] private float _maxStepHeight;
@@ -80,7 +81,6 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 	private void Awake()
 	{
-		//Having a rigidbody component in Unity is a good idea if you intend to have physics shapes that move around because of interpolation
 		_rBody = GetComponent<Rigidbody2D>();
 		_collider = GetComponent<BoxCollider2D>();
 
@@ -103,7 +103,6 @@ public class ExampleCharacterController2D : MonoBehaviour
 	private void Update()
 	{
 		if (_drawDebugInfo) {
-
 			var headPos = transform.position + transform.up * _collider.size.y * 1f;
 
 			Debug.DrawLine(headPos - Vector3.up * 0.5f, headPos + Vector3.up * 0.5f, Color.green);
@@ -111,6 +110,7 @@ public class ExampleCharacterController2D : MonoBehaviour
 			Debug.DrawRay(headPos, _velocity.normalized * 0.5f, Color.red);
 		}
 	}
+
 	public void SetUpVector(Vector2 up) => _upVector = up;
 	public Vector2 GetUpVector() => _upVector;
 	public Vector2 GetVelocity() => _velocity;
@@ -142,7 +142,6 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 		if (_groundInfo.isGrounded && _velocity.y <= 0) {
 			Vector2 relevantNormal = -SelectRelevantNormal(_groundInfo) * Math.Sign(_velocity.x);
-
 			_direction = Vector2.Perpendicular(relevantNormal);
 		}
 			
@@ -164,7 +163,14 @@ public class ExampleCharacterController2D : MonoBehaviour
 			}
 		}
 
-		_rBody.position = Vector2.MoveTowards(_rBody.position, _rBody.position + _direction, _velocity.magnitude * _dt);
+		float f = _dt / Mathf.Clamp(_subSteps, 1, 120);
+		for (float step = 0; step < _dt; step += f) {
+			_rBody.position = Vector2.MoveTowards(_rBody.position, _rBody.position + _direction, _velocity.magnitude * f);
+			if (ClampToGround(out Vector2 newNormal)) {
+				_direction = Vector2.Perpendicular(-newNormal) * Math.Sign(_velocity.x);
+			}
+		}
+
 		var finalPos = _rBody.position;
 
 		return new ControllerState { finalPosition = finalPos, finalRotation = _finalRot };
@@ -172,7 +178,6 @@ public class ExampleCharacterController2D : MonoBehaviour
 
 	public void EndMove(Vector2 finalPosition, float finalRotation) 
 	{
-		ClampToGround(ref finalPosition);
 		OverlapRecovery(ref finalPosition, _solverIterations);
 
 		_rBody.position = _startPos;
@@ -191,19 +196,25 @@ public class ExampleCharacterController2D : MonoBehaviour
 		}
 	}
 
-	private void ClampToGround(ref Vector2 finalPosition) 
+	private bool ClampToGround(out Vector2 normal) 
 	{
+		normal = Vector2.zero;
+
 		Vector2 dir = _groundInfo.isGrounded ? -SelectRelevantNormal(_groundInfo) : -_upVector;
 		int count = _rBody.Cast(dir, _hitResults, Mathf.Infinity);
 
 		if (!_enableGroundClamping || count == 0 && !IsGroundNormal(_hitResults[0].normal))
-			return;
+			return false;
 
 		if (_groundInfo.isGrounded && _hitResults[0].distance > 2 * _contactOffset)
-			return;
+			return false;
 
-		finalPosition += dir * (_hitResults[0].distance - _contactOffset);
-		_rBody.position = finalPosition;
+		if (_hitResults[0].distance <= _contactOffset)
+			return false;
+
+		_rBody.position += dir * (_hitResults[0].distance - _contactOffset);
+		normal = _hitResults[0].normal;
+		return true;
 	}
 
 	private void OverlapRecovery(ref Vector2 finalPosition, int solverIterations) 
